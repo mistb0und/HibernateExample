@@ -19,10 +19,27 @@ class Main {
         EntityManagerFactory emf = Persistence.createEntityManagerFactory("skillbox");
         EntityManager em = emf.createEntityManager();
 
-        orphanCheck(em);
+        entityGraphCheck(em);
 
         em.close();
         emf.close();
+    }
+
+    private static void entityGraphCheck(EntityManager em) {
+        inTransaction(em, entityManager -> {
+            jakarta.persistence.EntityGraph<Course> graph = entityManager
+                    .createEntityGraph(Course.class);
+            graph.addAttributeNodes("students");
+
+            List<Course> courses = entityManager
+                    .createQuery("select c from Course c", Course.class)
+                    .setHint("jakarta.persistence.fetchgraph", graph)
+                    .getResultList();
+
+            for (Course c : courses) {
+                System.out.println(c.getName() + ": " + c.getStudents().size());
+            }
+        });
     }
 
     private static void orphanCheck(EntityManager em) {
