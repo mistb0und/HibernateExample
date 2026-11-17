@@ -7,6 +7,7 @@ import jakarta.persistence.criteria.Root;
 import org.example.model.Course;
 import org.example.model.CourseType;
 import org.example.model.Student;
+import org.example.model.Teacher;
 
 import java.util.List;
 import java.util.Objects;
@@ -17,12 +18,137 @@ class Main {
     static void main(String[] args) {
         EntityManagerFactory emf = Persistence.createEntityManagerFactory("skillbox");
         EntityManager em = emf.createEntityManager();
-        List<Course> course = getCourseGreaterThanPrice(em, 100000);
 
-        course.forEach(course1 -> System.out.println(course1.getName() + " - " + course1.getPrice()));
+        orphanCheck(em);
 
         em.close();
         emf.close();
+    }
+
+    private static void orphanCheck(EntityManager em) {
+        inTransaction(em, entityManager -> {
+            Teacher teacher = entityManager
+                    .createQuery("select t from Teacher t join t.courses", Teacher.class)
+                    .setMaxResults(1)
+                    .getSingleResult();
+            Course removed = teacher.getCourses().getFirst();
+            System.out.println("Removing: " + removed.getName());
+            teacher.getCourses().remove(removed);
+        });
+
+        em.clear();
+        Teacher teacher = em
+                .createQuery("select t from Teacher t join t.courses", Teacher.class)
+                .setMaxResults(1)
+                .getSingleResult();
+        System.out.println("Courses left: " + teacher.getCourses().size());
+    }
+
+    private static void testCascade(EntityManager em) {
+        Course course = new Course();
+        course.setName("Course");
+        course.setType(CourseType.BUSINESS);
+        course.setDuration(110);
+        course.setDescription("desc");
+        course.setPrice(7717);
+
+        Teacher teacher = new Teacher();
+        teacher.setName("New Teacher");
+        teacher.setSalary(100);
+        teacher.setAge(30);
+        course.setTeacher(teacher);
+
+        inTransaction(em, (Consumer<EntityManager>) em2 -> em2.persist(course)); // що станеться?
+    }
+
+    private static void nPlusOneCheck(EntityManager em) {
+        inTransaction(em, entityManager -> {
+            List<Course> courses = entityManager
+                    .createQuery("select c from Course c join fetch c.students", Course.class)
+                    .getResultList();
+
+            for (Course course : courses) {
+                System.out.println(course.getName() + " students: " + course.getStudents().size());
+            }
+        });
+    }
+
+    private static void mergeCheck(EntityManager em) {
+        Course detachedCourse = new Course();
+        detachedCourse.setName("Merged Course");
+        detachedCourse.setType(CourseType.BUSINESS);
+        detachedCourse.setDuration(10);
+        detachedCourse.setDescription("desc");
+        detachedCourse.setId(getCourse(em, 1).getId());
+        detachedCourse.setPrice(777);
+
+        inTransaction(em, entityManager -> {
+            Course managed = entityManager.merge(detachedCourse);
+            System.out.println("detached contains: " + entityManager.contains(detachedCourse));
+            System.out.println("managed contains: " + entityManager.contains(managed));
+            System.out.println("same object: " + (managed == detachedCourse));
+            System.out.println("managed name: " + managed.getName());
+        });
+
+        // Перевірка в БД: clear() спорожняє кеш, find піде в БД
+        em.clear();
+        Course fromDb = getCourse(em, detachedCourse.getId());
+        System.out.println("DB name: " + fromDb.getName());
+        System.out.println("DB price: " + fromDb.getPrice());
+    }
+
+    private static void checkConditions(EntityManager em) {
+        inTransaction(em, entityManager -> {
+            Course course = new Course();
+            course.setName("Test");
+            course.setType(CourseType.BUSINESS);  // NOT NULL
+            course.setPrice(1000);                 // якщо NOT NULL
+            course.setDuration(10);
+            course.setDescription("desc");
+            // transient: Hibernate про нього не знає
+            System.out.println("new: " + entityManager.contains(course)); // false
+
+            entityManager.persist(course);
+            // managed: під наглядом
+            System.out.println("after persist: " + entityManager.contains(course)); // true
+
+            entityManager.flush(); // щоб ID згенерувався
+            System.out.println("id: " + course.getId());
+
+            entityManager.clear();
+            // detached: вийшов з persistence context
+            System.out.println("after clear: " + entityManager.contains(course)); // false
+
+            Course found = entityManager.find(Course.class, course.getId());
+            // managed знову — і це ІНШИЙ об'єкт, ніж course!
+            System.out.println("found == course: " + (found == course)); // false
+            System.out.println("after find: " + entityManager.contains(found)); // true
+        });
+    }
+
+    private static void clearCheck(EntityManager em) {
+        inTransaction(em, entityManager -> {
+            Course course = getCourse(entityManager, 1);
+            course.setPrice(40_000);
+            entityManager.clear();
+        });
+    }
+
+    private static void dirtyChecking(EntityManager em) {
+        // Dirty checking: find повертає managed-сутність,
+        // зміна поля + commit -> Hibernate сам генерує UPDATE
+        inTransaction(em, entityManager -> {
+            Course course = getCourse(entityManager, 1);
+            System.out.println("Before: " + course.getName() + " price=" + course.getPrice());
+            course.setPrice(30000);
+            // жодного update-методу не викликаємо
+        });
+
+        // em.clear() спорожняє persistence context — наступний find
+        // піде в БД, а не поверне той самий об'єкт з кешу
+        em.clear();
+        Course reloaded = getCourse(em, 1);
+        System.out.println("After: " + reloaded.getName() + " price=" + reloaded.getPrice());
     }
 
     private static List<Course> getCourseGreaterThanPrice(EntityManager em, int price) {
@@ -31,11 +157,11 @@ class Main {
             CriteriaQuery<Course> query = criteriaBuilder.createQuery(Course.class);
             Root<Course> from = query.from(Course.class);
             query.select(from).where(criteriaBuilder.greaterThan(from.<Integer>get("price"), price));
-             return  entityManager.createQuery(query).getResultList();
+            return entityManager.createQuery(query).getResultList();
         });
     }
 
-    private static List<Course> getCourse(EntityManager em) {
+    private static List<Course> getListCourse(EntityManager em) {
         return inTransaction(em, entityManager -> {
             CriteriaBuilder criteriaBuilder = entityManager.getCriteriaBuilder();
             CriteriaQuery<Course> query = criteriaBuilder.createQuery(Course.class);
@@ -131,8 +257,8 @@ class Main {
         });
     }
 
-    private static void getCourse(EntityManager em, int id) {
-        Course course = em.find(Course.class, id);
-        System.out.println(course);
+    private static Course getCourse(EntityManager em, int id) {
+        return em.find(Course.class, id);
+
     }
 }
