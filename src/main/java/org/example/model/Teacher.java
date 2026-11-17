@@ -16,7 +16,7 @@ public class Teacher {
     private int salary;
     private int age;
 
-    @OneToMany(mappedBy = "teacher", fetch = FetchType.LAZY)
+    @OneToMany(mappedBy = "teacher", fetch = FetchType.LAZY, orphanRemoval = true)
     private List<Course> courses = new ArrayList<>();
 
     public void setId(int id) {
