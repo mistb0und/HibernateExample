@@ -1,9 +1,7 @@
 package org.example;
 
 import jakarta.persistence.*;
-import jakarta.persistence.criteria.CriteriaBuilder;
-import jakarta.persistence.criteria.CriteriaQuery;
-import jakarta.persistence.criteria.Root;
+import jakarta.persistence.criteria.*;
 import org.example.model.Course;
 import org.example.model.CourseType;
 import org.example.model.Student;
@@ -19,26 +17,67 @@ class Main {
         EntityManagerFactory emf = Persistence.createEntityManagerFactory("skillbox");
         EntityManager em = emf.createEntityManager();
 
-        entityGraphCheck(em);
+        tupleCheck(em);
 
         em.close();
         emf.close();
     }
 
+    private static void tupleCheck(EntityManager em) {
+        inTransaction(em, entityManager -> {
+            CriteriaBuilder criteriaBuilder = entityManager.getCriteriaBuilder();
+            CriteriaQuery<Tuple> query = criteriaBuilder.createQuery(Tuple.class);
+
+            Root<Course> courseRoot = query.from(Course.class);
+            Join<Course, Teacher> teacherJoin = courseRoot.join("teacher", JoinType.LEFT);
+            Join<Course, Student> studentJoin = courseRoot.join("students", JoinType.LEFT);
+
+
+            query.select(criteriaBuilder.tuple(
+                    courseRoot.alias("course"),
+                    teacherJoin.alias("teacher"),
+                    studentJoin.alias("student")
+            ));
+
+            List<Tuple> resultList = entityManager.createQuery(query).getResultList();
+
+            for (Tuple t : resultList) {
+                Course course = t.get("course", Course.class);
+                Teacher teacher = t.get("teacher",Teacher.class);
+                Student student = t.get("student", Student.class);
+                System.out.println(
+                        course.getName() + " | " + (teacher != null ? teacher.getName() : "no teacher") + " | " +
+                                (student != null ? student.getName() : "no students")
+                );
+            }
+        });
+    }
+
+
+    private static void getTeacherAge(EntityManager em, int age) {
+        CriteriaBuilder criteriaBuilder = em.getCriteriaBuilder();
+        CriteriaQuery<Course> query = criteriaBuilder.createQuery(Course.class);
+        Root<Course> from = query.from(Course.class);
+        from.<Course, Teacher>fetch("teacher", JoinType.LEFT);
+        Join<Course, Teacher> join = from.<Course, Teacher>join("teacher", JoinType.LEFT);
+
+        query.where(criteriaBuilder.gt(join.get("age"), age));
+        query.select(from);
+
+        List<Course> resultList = em.createQuery(query).getResultList();
+        resultList.forEach(System.out::println);
+    }
+
     private static void entityGraphCheck(EntityManager em) {
         inTransaction(em, entityManager -> {
-            jakarta.persistence.EntityGraph<Course> graph = entityManager
-                    .createEntityGraph(Course.class);
-            graph.addAttributeNodes("students");
+            EntityGraph<Course> entityGraph = entityManager.createEntityGraph(Course.class);
 
-            List<Course> courses = entityManager
-                    .createQuery("select c from Course c", Course.class)
-                    .setHint("jakarta.persistence.fetchgraph", graph)
+            List<Course> resultList = entityManager.createQuery("select c from Course c", Course.class)
+                    .setHint("jakarta.persistence.fetchgraph", "Course.full")
                     .getResultList();
 
-            for (Course c : courses) {
-                System.out.println(c.getName() + ": " + c.getStudents().size());
-            }
+            resultList.forEach(System.out::println);
+
         });
     }
 

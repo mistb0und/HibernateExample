@@ -5,7 +5,14 @@ import jakarta.persistence.*;
 import java.util.List;
 
 @Entity
-@Table(name = "courses")
+@Table(name = "Courses")
+@NamedEntityGraph(
+        name = "Course.full",
+        attributeNodes = {
+                @NamedAttributeNode("students"),
+                @NamedAttributeNode("teacher")
+        }
+)
 public class Course {
 
     @Id
